@@ -1,0 +1,40 @@
+apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+
+android {
+    namespace 'com.jarvis.display'
+    compileSdk 34
+    buildToolsVersion "30.0.2"
+
+    defaultConfig {
+        applicationId "com.jarvis.display"
+        minSdk 23
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+        // Disable locale-specific resources to reduce resource count
+        resConfigs "en"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+}
+
+dependencies {
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'com.google.code.gson:gson:2.10.1'
+    implementation 'androidx.gridlayout:gridlayout:1.0.0'
+}
