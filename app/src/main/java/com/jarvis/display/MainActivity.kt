@@ -2,13 +2,7 @@ package com.jarvis.display
 
 import android.annotation.SuppressLint
 import android.app.Activity
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.graphics.Color
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -20,77 +14,38 @@ import android.view.WindowManager
 import android.widget.ImageButton
 import android.widget.TextView
 import androidx.core.content.ContextCompat
-import java.util.Random
 
 class MainActivity : Activity(), FlipPresenter.FlipView {
 
     private lateinit var flipBoard: FlipBoardView
-    private lateinit var accentBar: View
+    private lateinit var matrixQueue: MatrixQueue
     private lateinit var muteButton: ImageButton
     private lateinit var statusText: TextView
     private lateinit var tapZone: View
-
-    private lateinit var presenter: FlipPresenter
-    private lateinit var apiService: ApiService
-    private lateinit var cacheManager: CacheManager
+    private lateinit var accentBar: View
 
     private var adminTapCount = 0
     private var lastAdminTapTime = 0L
-    private val ADMIN_TAP_DELAY = 500L
+    private val ADMIN_TAP_DELAY = 2000L
+    private val ADMIN_TAP_THRESHOLD = 5
 
-    private val ACCENT_COLORS = intArrayOf(
-        Color.parseColor("#FF3333"),
-        Color.parseColor("#3333FF"),
-        Color.parseColor("#33FF33"),
-        Color.parseColor("#FFFF33"),
-        Color.parseColor("#FF33FF"),
-        Color.parseColor("#33FFFF"),
-        Color.parseColor("#FF8833"),
-        Color.parseColor("#8833FF")
-    )
-
-    private val networkReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == ConnectivityManager.CONNECTIVITY_ACTION) {
-                if (isNetworkAvailable(this@MainActivity)) {
-                    presenter.refreshNow()
-                }
-            }
-        }
-    }
-
-    private val watchdogHandler = object : Handler(Looper.getMainLooper()) {
-        override fun handleMessage(msg: android.os.Message) {
-            WatchdogService.noteMainActivityRunning()
-        }
-    }
-
+    @SuppressLint("WrongConstant")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Keep screen on
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
-        // Fullscreen kiosk mode
         hideSystemUI()
 
         setContentView(R.layout.activity_main)
 
-        cacheManager = CacheManager(this)
-        apiService = ApiService()
-        apiService.setBaseUrl("http://${cacheManager.getServerIp()}")
-
         initViews()
         setupAdminTapZone()
-        registerNetworkReceiver()
-        startWatchdogHeartbeat()
 
-        presenter = FlipPresenter(this, apiService, cacheManager)
-
-        // Start watchdog service
-        WatchdogService.startIfNotRunning(this)
-
-        presenter.start()
+        // Create queue and start with test data
+        matrixQueue = MatrixQueue(flipBoard) {
+            runOnUiThread { updateStatus() }
+        }
+        matrixQueue.startWithTestData()
     }
 
     @SuppressLint("WrongConstant")
@@ -123,20 +78,22 @@ class MainActivity : Activity(), FlipPresenter.FlipView {
         updateAccentBar(Color.parseColor("#33FF33"))
 
         muteButton.setOnClickListener {
-            presenter.toggleMute()
+            // Toggle mute (not implemented yet in MVP)
         }
-        // Set mute state directly from cache (presenter not yet available)
-        muteButton.setImageDrawable(ContextCompat.getDrawable(this,
-            if (cacheManager.isMuted()) android.R.drawable.ic_lock_silent_mode
-            else android.R.drawable.ic_lock_silent_mode_off))
 
-        flipBoard.onAllAnimationsComplete = {
-            watchdogHandler.sendEmptyMessage(0)
+        statusText.text = "last refresh --:--:--"
+
+        flipBoard.onAnimationComplete = {
+            runOnUiThread { updateStatus() }
         }
     }
 
+    private fun updateStatus() {
+        val now = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+        statusText.text = "last refresh ${now.format(java.util.Date())}"
+    }
+
     private fun setupAdminTapZone() {
-        // Bottom-right corner: 5 taps to reveal admin
         tapZone.setOnClickListener {
             val now = System.currentTimeMillis()
             if (now - lastAdminTapTime > ADMIN_TAP_DELAY * 3) {
@@ -144,7 +101,7 @@ class MainActivity : Activity(), FlipPresenter.FlipView {
             }
             lastAdminTapTime = now
             adminTapCount++
-            if (adminTapCount >= 5) {
+            if (adminTapCount >= ADMIN_TAP_THRESHOLD) {
                 adminTapCount = 0
                 openAdminActivity()
             }
@@ -152,97 +109,34 @@ class MainActivity : Activity(), FlipPresenter.FlipView {
     }
 
     private fun openAdminActivity() {
-        val intent = Intent(this, AdminActivity::class.java)
-        startActivity(intent)
+        startActivity(android.content.Intent(this, AdminActivity::class.java))
     }
 
-    private fun registerNetworkReceiver() {
-        NetworkWatcher.onNetworkAvailable = {
-            Handler(Looper.getMainLooper()).post {
-                presenter.refreshNow()
-            }
-        }
-        val filter = IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION)
-        registerReceiver(networkReceiver, filter)
-    }
-
-    private fun startWatchdogHeartbeat() {
-        val handler = Handler(Looper.getMainLooper())
-        val runnable = object : Runnable {
-            override fun run() {
-                WatchdogService.noteMainActivityRunning()
-                handler.postDelayed(this, 5_000)
-            }
-        }
-        handler.post(runnable)
-    }
-
-    override fun displayMessages(messages: List<Message>, onMessageChanged: (Boolean) -> Unit) {
-        flipBoard.displayMessages(messages) { changed ->
-            if (changed) {
-                randomizeAccentColor()
-            }
-            onMessageChanged(changed)
-        }
-    }
-
-    override fun showDefaultMessage() {
-        flipBoard.showDefaultMessage()
-        randomizeAccentColor()
-    }
-
-    override fun updateLastRefreshTime(time: String) {
-        statusText.text = "Last refresh: $time"
-    }
-
-    override fun updateAccentBar(color: Int) {
-        accentBar.setBackgroundColor(color)
-    }
-
-    override fun setMuted(muted: Boolean) {
-        flipBoard.setMuted(muted)
-        updateMuteButton()
-    }
-
-    private fun updateMuteButton() {
-        val iconRes = if (presenter.isMuted()) {
-            android.R.drawable.ic_lock_silent_mode
-        } else {
-            android.R.drawable.ic_lock_silent_mode_off
-        }
-        muteButton.setImageDrawable(ContextCompat.getDrawable(this, iconRes))
+    override fun showDefaultMatrix() {
+        flipBoard.showDefaultMatrix()
     }
 
     private fun randomizeAccentColor() {
-        val color = ACCENT_COLORS[Random().nextInt(ACCENT_COLORS.size)]
-        updateAccentBar(color)
+        val colors = intArrayOf(
+            Color.parseColor("#FF5722"), Color.parseColor("#E91E63"),
+            Color.parseColor("#9C27B0"), Color.parseColor("#673AB7"),
+            Color.parseColor("#3F51B5"), Color.parseColor("#2196F3"),
+            Color.parseColor("#009688"), Color.parseColor("#4CAF50"),
+            Color.parseColor("#FF9800"), Color.parseColor("#FFEB3B")
+        )
+        updateAccentBar(colors[kotlin.random.Random.nextInt(colors.size)])
     }
 
-    override fun onResume() {
-        super.onResume()
-        WatchdogService.noteMainActivityRunning()
-        hideSystemUI()
-        updateMuteButton()
-    }
-
-    override fun onPause() {
-        super.onPause()
+    private fun updateAccentBar(color: Int) {
+        if (::accentBar.isInitialized) {
+            accentBar.setBackgroundColor(color)
+        }
     }
 
     override fun onDestroy() {
-        presenter.stop()
-        try {
-            unregisterReceiver(networkReceiver)
-        } catch (e: Exception) {
-            // Receiver may not be registered
-        }
         super.onDestroy()
-    }
-
-    private fun isNetworkAvailable(context: Context): Boolean {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = cm.activeNetwork ?: return false
-        val capabilities = cm.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        if (::matrixQueue.isInitialized) {
+            matrixQueue.stop()
+        }
     }
 }

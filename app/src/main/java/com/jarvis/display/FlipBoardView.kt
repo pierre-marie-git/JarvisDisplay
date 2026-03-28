@@ -2,132 +2,136 @@ package com.jarvis.display
 
 import android.content.Context
 import android.util.AttributeSet
-import android.view.View
 import android.view.ViewGroup
-import android.widget.GridLayout
+import kotlin.random.Random
 
+/**
+ * Custom flip-board display: a grid of tiles that animate character changes.
+ * Each tile flips when its character changes, creating the classic split-flap effect.
+ */
 class FlipBoardView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
-) : GridLayout(context, attrs, defStyleAttr) {
+) : ViewGroup(context, attrs, defStyleAttr) {
 
     companion object {
         const val COLS = 22
-        const val ROWS = 5
+        const val ROWS = 25
         const val TOTAL_TILES = COLS * ROWS
+        private const val ANIM_STAGGER_MS = 1L   // stagger between tiles (ms)
+        private const val ANIM_DURATION_MS = 400L // how long each tile flip takes
     }
 
-    private val tiles = arrayOfNulls<DisplayTile>(TOTAL_TILES)
-    private var lastMessageId: String? = null
-    private var isMuted: Boolean = false
-
-    var onAllAnimationsComplete: (() -> Unit)? = null
+    private val tileViews = arrayOfNulls<DisplayTile>(TOTAL_TILES)
+    private var currentContent: String = ""
+    private var pendingCount = 0
+    var onAnimationComplete: (() -> Unit)? = null
 
     init {
-        columnCount = COLS
-        rowCount = ROWS
-
-        val tileWidth = ViewGroup.LayoutParams.WRAP_CONTENT
-        val tileHeight = ViewGroup.LayoutParams.WRAP_CONTENT
-
-        for (index in 0 until TOTAL_TILES) {
-            val row = index / COLS
-            val col = index % COLS
+        isClickable = false
+        isFocusable = false
+        for (i in 0 until TOTAL_TILES) {
             val tile = DisplayTile(context).apply {
-                setTilePosition(row, col)
+                isClickable = false
+                isFocusable = false
             }
-            tiles[index] = tile
-
-            val params = LayoutParams().apply {
-                width = 0
-                height = 0
-                columnSpec = spec(col, 1f)
-                rowSpec = spec(row)
-                setMargins(2, 2, 2, 2)
+            tileViews[i] = tile
+            addView(tile)
+        }
+        // Start all black
+        post {
+            for (tile in tileViews) {
+                tile?.setChar(' ', false, 0)
             }
-            addView(tile, params)
         }
     }
 
-    fun setMuted(muted: Boolean) {
-        isMuted = muted
-    }
+    /**
+     * Display a matrix — only tiles in `changes` animate.
+     * Other tiles stay in their current state.
+     */
+    fun displayMatrix(matrix: Matrix) {
+        val newContent = matrix.toFlatChars()
+        val changedIndices = matrix.changes ?: (0 until TOTAL_TILES).toSet()
 
-    fun displayMessages(messages: List<Message>, onMessageChanged: (Boolean) -> Unit) {
-        if (messages.isEmpty()) {
-            showDefaultMessage()
+        val actuallyChanged = changedIndices.filter { newContent[it] != currentContent.getOrNull(it) }.toSet()
+
+        if (actuallyChanged.isEmpty()) {
+            currentContent = newContent
+            onAnimationComplete?.invoke()
             return
         }
 
-        val message = messages[0]
-        val changed = message.id != lastMessageId
-        lastMessageId = message.id
+        currentContent = newContent
+        pendingCount = actuallyChanged.size
 
-        val textRows = message.text
-        val flatText = StringBuilder()
-        for (row in textRows) {
-            flatText.append(row.padEnd(COLS).substring(0, COLS))
-        }
-        // Pad with empty rows if needed
-        while (flatText.length < TOTAL_TILES) {
-            flatText.append(" ".repeat(TOTAL_TILES - flatText.length))
-        }
-
-        var completedCount = 0
-        val totalToAnimate = if (changed) TOTAL_TILES else 0
-
-        for (index in 0 until TOTAL_TILES) {
-            val tile = tiles[index]!!
-            val targetChar = flatText[index]
-            val row = index / COLS
-            val col = index % COLS
-            val delay = (row * COLS + col) * 25L
-
-            if (changed) {
-                tile.setChar(targetChar, true, delay) {
-                    completedCount++
-                    if (completedCount >= totalToAnimate) {
-                        onAllAnimationsComplete?.invoke()
-                    }
+        for (i in actuallyChanged) {
+            val tile = tileViews[i]!!
+            val targetChar = newContent[i]
+            val delay = i * ANIM_STAGGER_MS
+            tile.setChar(targetChar, true, delay) {
+                pendingCount--
+                if (pendingCount <= 0) {
+                    onAnimationComplete?.invoke()
                 }
-            } else {
-                tile.setChar(targetChar, false, 0)
             }
         }
-
-        if (!changed) {
-            onMessageChanged(false)
-        } else {
-            onMessageChanged(true)
-        }
     }
 
-    fun showDefaultMessage() {
-        val defaultText = buildDefaultDisplay()
-        for (index in 0 until TOTAL_TILES) {
-            val tile = tiles[index]!!
-            tile.setChar(defaultText[index], false, 0)
-        }
-    }
-
-    private fun buildDefaultDisplay(): String {
-        val lines = listOf(
-            "                       ",
-            "     JARVIS ONLINE     ",
-            "                       ",
-            "                       ",
-            "                       "
+    /** Show default "JARVIS ONLINE" matrix with wave animation */
+    fun showDefaultMatrix() {
+        val defaultMatrix = Matrix(
+            id = "default",
+            rows = buildDefaultRows("JARVIS ONLINE"),
+            durationSeconds = 8
         )
-        val sb = StringBuilder()
-        for (line in lines) {
-            sb.append(line.padEnd(COLS).substring(0, COLS))
-        }
-        return sb.toString()
+        displayMatrix(defaultMatrix)
     }
 
-    fun getTile(row: Int, col: Int): DisplayTile? {
-        if (row < 0 || row >= ROWS || col < 0 || col >= COLS) return null
-        return tiles[row * COLS + col]
+    private fun buildDefaultRows(message: String): List<String> {
+        val startCol = (COLS - message.length) / 2
+        return (0 until ROWS).map { row ->
+            String(CharArray(COLS) { col ->
+                if (row == ROWS / 2 && col in startCol until startCol + message.length) {
+                    message[col - startCol]
+                } else ' '
+            })
+        }
+    }
+
+    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+        val w = r - l
+        val h = b - t
+        val cellSize = minOf(w / COLS, h / ROWS)
+        val offsetX = (w - cellSize * COLS) / 2
+        val offsetY = (h - cellSize * ROWS) / 2
+        var i = 0
+        for (row in 0 until ROWS) {
+            for (col in 0 until COLS) {
+                tileViews[i]?.let { tile ->
+                    tile.layout(
+                        offsetX + col * cellSize + 1,
+                        offsetY + row * cellSize + 1,
+                        offsetX + col * cellSize + cellSize - 1,
+                        offsetY + row * cellSize + cellSize - 1
+                    )
+                }
+                i++
+            }
+        }
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val w = MeasureSpec.getSize(widthMeasureSpec)
+        val h = MeasureSpec.getSize(heightMeasureSpec)
+        val cellSize = minOf(w / COLS, h / ROWS)
+        for (tile in tileViews) {
+            tile?.measure(
+                MeasureSpec.makeMeasureSpec(cellSize, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(cellSize, MeasureSpec.EXACTLY)
+            )
+        }
+        setMeasuredDimension(w, h)
     }
 }
