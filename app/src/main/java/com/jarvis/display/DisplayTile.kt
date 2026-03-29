@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
+import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
@@ -19,25 +20,24 @@ class DisplayTile @JvmOverloads constructor(
 
     private val RANDOM_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*?<>{}[]|"
     private val SCRAMBLE_COLORS = intArrayOf(
-        Color.parseColor("#FF3333"), // red
-        Color.parseColor("#3333FF"), // blue
-        Color.parseColor("#33FF33"), // green
-        Color.parseColor("#FFFF33"), // yellow
-        Color.parseColor("#FFFFFF")  // white
+        Color.parseColor("#FF3333"),
+        Color.parseColor("#3333FF"),
+        Color.parseColor("#33FF33"),
+        Color.parseColor("#FFFF33"),
+        Color.parseColor("#FFFFFF")
     )
     private val DEFAULT_BG = Color.parseColor("#222222")
     private val TEXT_COLOR = Color.parseColor("#FFFFFF")
 
-    private var currentChar: Char = ' '
-    private var displayChar: Char = ' '
-    private var isAnimating = false
-    private var isSettled = false
+    private var currentText: String = " "
+    private var displayText: String = " "
+    private var isAnimating: Boolean = false
+    private var isSettled: Boolean = false
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = TEXT_COLOR
         textAlign = Paint.Align.CENTER
-        isFakeBoldText = true
-        typeface = android.graphics.Typeface.MONOSPACE
+        typeface = Typeface.DEFAULT
     }
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -57,18 +57,30 @@ class DisplayTile @JvmOverloads constructor(
         tileCol = col
     }
 
-    fun setChar(c: Char, animate: Boolean, delayMs: Long, onComplete: (() -> Unit)? = null) {
-        val newChar = if (c == '\u0000') ' ' else c
+    /**
+     * Set the character(s) to display. Can be 1 or 2 UTF-16 code units.
+     * For emojis (surrogate pairs), pass the full 2-char string.
+     * If this tile holds the LOW surrogate of a pair, pass just the single char
+     * and the tile will just show it as-is (no animation) since the high-surrogate
+     * tile handles the pair animation.
+     */
+    fun setChar(text: String, animate: Boolean, delayMs: Long, onComplete: (() -> Unit)? = null) {
+        // '\u0000' = blank tile (used for low surrogates consumed by emoji pairs)
+        val newText = when {
+            text.isEmpty() -> " "
+            text == "\u0000" -> " "
+            else -> text
+        }
 
-        if (newChar == currentChar && !animate) {
-            displayChar = newChar
+        if (newText == currentText && !animate) {
+            displayText = newText
             invalidate()
             return
         }
 
         if (!animate) {
-            currentChar = newChar
-            displayChar = newChar
+            currentText = newText
+            displayText = newText
             isSettled = true
             isAnimating = false
             bgPaint.color = DEFAULT_BG
@@ -83,23 +95,22 @@ class DisplayTile @JvmOverloads constructor(
 
         isAnimating = true
         isSettled = false
-        currentChar = newChar
+        currentText = newText
 
         handler.postDelayed({
-            runScrambleAnimation(newChar, onComplete)
+            runScrambleAnimation(newText, onComplete)
         }, delayMs)
     }
 
-    private fun runScrambleAnimation(targetChar: Char, onComplete: (() -> Unit)?) {
-        val scrambleCount = 10 + Random.nextInt(5) // 10-14
+    private fun runScrambleAnimation(targetText: String, onComplete: (() -> Unit)?) {
+        val scrambleCount = 10 + Random.nextInt(5)
         var step = 0
         var colorIndex = 0
 
         animationRunnable = object : Runnable {
             override fun run() {
                 if (step < scrambleCount) {
-                    // Scramble phase
-                    displayChar = RANDOM_CHARS[Random.nextInt(RANDOM_CHARS.length)]
+                    displayText = RANDOM_CHARS.random().toString()
                     textPaint.color = TEXT_COLOR
                     bgPaint.color = SCRAMBLE_COLORS[colorIndex % SCRAMBLE_COLORS.size]
                     colorIndex++
@@ -107,8 +118,7 @@ class DisplayTile @JvmOverloads constructor(
                     invalidate()
                     handler.postDelayed(this, 70)
                 } else {
-                    // Settle phase
-                    displayChar = targetChar
+                    displayText = targetText
                     bgPaint.color = DEFAULT_BG
                     textPaint.color = TEXT_COLOR
                     isSettled = true
@@ -134,15 +144,15 @@ class DisplayTile @JvmOverloads constructor(
 
         textPaint.textSize = (minOf(width, height) * 0.65f)
         val textY = (height / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f)
-        canvas.drawText(displayChar.toString(), width / 2f, textY, textPaint)
+        canvas.drawText(displayText, width / 2f, textY, textPaint)
     }
 
     fun reset() {
         handler.removeCallbacksAndMessages(null)
         isAnimating = false
         isSettled = false
-        currentChar = ' '
-        displayChar = ' '
+        currentText = " "
+        displayText = " "
         bgPaint.color = DEFAULT_BG
         textPaint.color = TEXT_COLOR
         invalidate()

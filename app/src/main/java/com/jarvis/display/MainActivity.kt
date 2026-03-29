@@ -46,6 +46,15 @@ class MainActivity : Activity(), FlipPresenter.FlipView {
             runOnUiThread { updateStatus() }
         }
         matrixQueue.startWithTestData()
+
+        // Start InboxServer to receive matrices from backend
+        (application as JarvisApp).startInboxServer { matrices ->
+            if (matrices.isNotEmpty()) {
+                runOnUiThread {
+                    matrixQueue.loadAndPlay(matrices)
+                }
+            }
+        }
     }
 
     @SuppressLint("WrongConstant")
@@ -138,5 +147,6 @@ class MainActivity : Activity(), FlipPresenter.FlipView {
         if (::matrixQueue.isInitialized) {
             matrixQueue.stop()
         }
+        (application as JarvisApp).stopInboxServer()
     }
 }

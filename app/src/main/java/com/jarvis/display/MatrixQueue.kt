@@ -2,6 +2,7 @@ package com.jarvis.display
 
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import kotlin.random.Random
 
 /**
@@ -38,17 +39,22 @@ class MatrixQueue(
         }
     }
 
-    /** Load matrices and start the display loop */
+    /** Load matrices and start the display loop. Restarts immediately if already running. */
     fun loadAndPlay(newMatrices: List<Matrix>) {
+        Log.i("MatrixQueue", "loadAndPlay: ${newMatrices.size} matrices, firstId=${newMatrices.firstOrNull()?.id}, isRunning=$isRunning")
         matrices.clear()
         matrices.addAll(newMatrices)
         currentIndex = 0
-        if (!isRunning) {
-            isRunning = true
-            // Init with black screen
-            previousContent = String(CharArray(Matrix.COLS * Matrix.ROWS) { ' ' })
-            playCurrent()
+        val wasRunning = isRunning
+        isRunning = true
+        if (wasRunning) {
+            // Stop pending animation and restart immediately with new matrices
+            handler.removeCallbacksAndMessages(null)
+        } else {
+            // Init with blank screen for first start
+            previousContent = String(CharArray(Matrix.COLS * Matrix.ROWS) { '\u0000' })
         }
+        playCurrent()
     }
 
     /** Start with default test matrices (no server needed) */
@@ -57,7 +63,10 @@ class MatrixQueue(
     }
 
     private fun playCurrent() {
-        if (matrices.isEmpty()) return
+        if (matrices.isEmpty()) {
+            Log.i("MatrixQueue", "playCurrent: no matrices, skipping")
+            return
+        }
 
         val matrix = matrices[currentIndex]
         val newContent = matrix.toFlatChars()
@@ -92,6 +101,7 @@ class MatrixQueue(
         val displayMs = (matrix.durationSeconds * 1000L) - animMs
 
         handler.postDelayed({
+            Log.i("MatrixQueue", "scheduleNext: index=$currentIndex → next, ${matrices.size} matrices")
             currentIndex = (currentIndex + 1) % matrices.size
             playCurrent()
         }, maxOf(displayMs, 500L))

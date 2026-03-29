@@ -19,8 +19,8 @@ class FlipBoardView @JvmOverloads constructor(
         const val COLS = 22
         const val ROWS = 25
         const val TOTAL_TILES = COLS * ROWS
-        private const val ANIM_STAGGER_MS = 1L   // stagger between tiles (ms)
-        private const val ANIM_DURATION_MS = 400L // how long each tile flip takes
+        private const val ANIM_STAGGER_MS = 1L
+        private const val ANIM_DURATION_MS = 400L
     }
 
     private val tileViews = arrayOfNulls<DisplayTile>(TOTAL_TILES)
@@ -42,8 +42,23 @@ class FlipBoardView @JvmOverloads constructor(
         // Start all black
         post {
             for (tile in tileViews) {
-                tile?.setChar(' ', false, 0)
+                tile?.setChar(" ", false, 0)
             }
+        }
+    }
+
+    /**
+     * Extract 1 or 2 UTF-16 code units for tile at col.
+     * Emojis (code points > U+FFFF) are encoded as surrogate pairs in UTF-16.
+     */
+    private fun getTileText(content: String, col: Int): String {
+        if (col >= content.length) return " "
+        val ch = content[col]
+        return when {
+            ch == '\u0000' -> " "
+            ch.isHighSurrogate() && col + 1 < content.length && content[col + 1].isLowSurrogate() ->
+                content.substring(col, col + 2)
+            else -> ch.toString()
         }
     }
 
@@ -55,7 +70,9 @@ class FlipBoardView @JvmOverloads constructor(
         val newContent = matrix.toFlatChars()
         val changedIndices = matrix.changes ?: (0 until TOTAL_TILES).toSet()
 
-        val actuallyChanged = changedIndices.filter { newContent[it] != currentContent.getOrNull(it) }.toSet()
+        val actuallyChanged = changedIndices.filter { i ->
+            getTileText(newContent, i) != getTileText(currentContent, i)
+        }.toSet()
 
         if (actuallyChanged.isEmpty()) {
             currentContent = newContent
@@ -68,9 +85,9 @@ class FlipBoardView @JvmOverloads constructor(
 
         for (i in actuallyChanged) {
             val tile = tileViews[i]!!
-            val targetChar = newContent[i]
+            val targetText = getTileText(newContent, i)
             val delay = i * ANIM_STAGGER_MS
-            tile.setChar(targetChar, true, delay) {
+            tile.setChar(targetText, true, delay) {
                 pendingCount--
                 if (pendingCount <= 0) {
                     onAnimationComplete?.invoke()
